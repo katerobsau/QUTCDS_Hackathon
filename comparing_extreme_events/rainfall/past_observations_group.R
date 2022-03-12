@@ -1,3 +1,24 @@
+# Comparing Daily Precipitation in the Lead Up to and During the 2011 and 2022 Extreme Rainfall Events
+#
+# This work began in the #past-observations group of the Hackathon
+#
+# Contributors:
+#   Ben R Fitzpatrick (BRF)
+#   Kate R Saunders (KRS)
+#   Oaks Holland (OH)
+#
+# Contributions to Date:
+#   - Provided the original code to download, clean and summarise data from weather stations with `rnoaa`, `lubridate` and the `tidyverse` from which this code is adapted (KRS) see https://github.com/katerobsau/conversationNSWFloods-
+#   - Adapted code from KRS to use `sf` and produce animations (BRF & KRS)
+#   - Prepared some of the geospatial data layers for use in this project (OH)
+#
+# Objectives:
+#   - Calculate catchment level summary statistics of daily precipitation in the lead up to and during the 2011 and 2022 extreme rainfall events (BRF and anyone else interested)
+#   - Produce visualisations (and potentially animation animations and interactive visualisations) of these summary statistics to discover and communicate key differences between the 2011 and 2022 extreme events (BRF and anyone else interested)
+#   
+
+# Ben will edit (tidy, comment and streamline) the code below the point where we are ready to start preparing catchment level summary statistics 
+
 library(rnoaa)
 library(tidyverse)
 library(ozmaps)
