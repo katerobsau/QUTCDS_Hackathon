@@ -21,21 +21,199 @@
 
 library(rnoaa)
 library(tidyverse)
+library(lubridate)
 library(ozmaps)
 library(sf)
 library(ggspatial)
 library(viridis)
 
 
-# get the station meta data
+# Load a dataframe with meta data describing all available weather stations from the Global Historical Climatology Network daily (GHCNd) data set
+
 all.stations <- ghcnd_stations()
 
-all.stations
+group_by(all.stations, id) %>%
+  count() %>%
+    pull(n) %>%
+      summary()
 
-all.stations.sf <- st_as_sf(x = all.stations,
-                            coords = c('longitude', 'latitude'),
-                            crs = 4326
-                   )
+# each station (uniquely identified by the column `id` has between 1 and 62 rows of data in this data frame)
+
+# for example:
+
+filter(.data = all.stations, id == pull(all.stations, id) %>% pluck(1))
+
+# thus station id `ACW00011604` has rows describing that this station collects data on the following climatic variables:
+
+filter(.data = all.stations, id == pull(all.stations, id) %>% pluck(1)) %>% pull(element)
+
+# the abrieviations used in the column `element` are defined here:
+# <https://www1.ncdc.noaa.gov/pub/data/ghcn/daily/readme.txt>
+
+# here we are interested in rainfall so we are interested in the variables:
+
+# PRCP = Precipitation (tenths of mm)
+
+# thus we filter the meta data to the rows describing the collection of precipitation data at weather stations
+
+all.stations.prcp <- filter(.data = all.stations, element == 'PRCP')
+
+# now each station that collects precipitation data is represented by a single row (and entry in the `id` column) in `all.stations.prcp`
+
+nrow(all.stations.prcp) == pull(all.stations.prcp, id) %>% unique() %>% length()
+
+nrow(all.stations.prcp)
+
+# and we can see that we have data from 117466 stations globally
+
+# here we are interested in rainfall in the catchment of the Brisbane river in Queensland and neighbouring catchments
+
+# thus to avoid downloading a lot more data than we need (and thereby putting unnecessary load on a shared resource) we need to identify the subset of station IDs that identify the weather stations that are situated within our catchments of interest
+
+# if we download spatial polygons representing the boundaries of catchments in Queensland we can perform this subsetting by identifying which stations are contained within the boundaries of our catchments of interest
+
+# first we need to identify the catchments of interest from pubically available data
+
+# first we can load a spatial object representing the boundaries of the state of Queensland from the `ozmaps` package:
+
+qld.border.sf <- ozmap_data() %>%
+                   filter(NAME == 'Queensland')
+
+qld.border.sf
+
+ggplot() +
+  geom_sf(data = qld.border.sf) +
+  annotation_north_arrow(location = "tr", which_north = "true") +
+  theme_bw() +
+  labs(title = 'Boundaries of the State of Queensland')
+  
+# next we can load spatial objects representing the drainage basins of Queensland
+
+# these data were downloaded from https://qldspatial.information.qld.gov.au/catalogue/custom/search.page?q=%22Drainage%20basins%20-%20Queensland%22
+
+qld.catchments.sf <- st_read(dsn = '~/flood_hackathon/precip/data/qld_drainage_basins/QSC_Extracted_Data_20220311_091642932000-101892/Drainage_basins.shp')
+
+ggplot() +
+  geom_sf(data = qld.catchments.sf) +
+  annotation_north_arrow(location = "tr", which_north = "true") +
+  theme_bw() +
+  labs(title = 'Boundaries of the Drainage Basins/Catchments\nof the Major Rivers in Queensland')
+
+# then zooming in to the immediate vicinity of the catchment of the Brisbane River and including the catchment names in the plot:
+
+
+ggplot() +
+  geom_sf(data = st_crop(x = qld.catchments.sf, xmin = 145, xmax = 155, ymin = -30, ymax = -25)) + 
+  geom_sf_label(data = st_crop(x = qld.catchments.sf, xmin = 145, xmax = 155, ymin = -30, ymax = -25),
+                aes(label = BASIN_NAME))
+ 
+# here we will confine our exploration to the data from the weather stations located within Brisbane River and neighbouring catchments, namely:
+# Mary, Maroochy, Brisbane, Pine, Moreton-Bay Islands and Logan-Albert
+
+catchments.of.interest <- c('Mary', 'Maroochy', 'Brisbane', 'Pine', 'Moreton-Bay Islands', 'Logan-Albert')
+
+# qcoi = Queensland Catchments of Interest
+
+qcoi.sf <- filter(.data = qld.catchments.sf, BASIN_NAME %in% c('Mary', 'Maroochy', 'Brisbane', 'Pine', 'Moreton Bay Islands', 'Logan-Albert'))
+
+ggplot() +
+  geom_sf(data = qcoi.sf) +
+  geom_sf_label(data = qcoi.sf,
+                aes(label = BASIN_NAME)) +
+  annotation_north_arrow(location = "tr", which_north = "true") +
+  theme_bw() +
+  labs(x = '', y = '', title = 'Catchmets of Interest in Queensland') 
+
+# we can also add on the major water ways in each of these catchments using data downloaded from here:
+# <https://www.data.qld.gov.au/dataset/hydrographic-features-queensland-series/resource/6f052df7-bbbe-4eb8-a46f-c86f14498234?>
+
+qld.mjr.ww.sf <- st_read(dsn = '~/flood_hackathon/precip/data/qld_mjr_waterways/QSC_Extracted_Data_20220310_185804056000-39392')
+
+# check the two object use the same coordinate reference systems
+
+st_crs( qld.mjr.ww.sf) == st_crs(qcoi.sf)
+
+# transform the `qld.mjr.ww.sf` to use the CRS of `qcoi.sf`
+
+st_crs( qld.mjr.ww.sf) == st_crs(qcoi.sf)
+
+qld.mjr.ww.sf <- st_transform(x = qld.mjr.ww.sf, crs= st_crs(qcoi.sf))
+
+st_crs( qld.mjr.ww.sf) == st_crs(qcoi.sf)
+
+# find the major waterways contained withing the catchments of interest
+
+qcoi.mjr.ww.sf <- st_intersection(x = qld.mjr.ww.sf, y = qcoi.sf)
+
+# add these waterways to our plot and colour the catchments to make visually distinguishing catchment boundaries from water ways easier
+
+ggplot() +
+  geom_sf(data = qcoi.sf, aes(fill = BASIN_NAME), alpha = 0.25) +
+  geom_sf(data = qcoi.mjr.ww.sf, colour = 'blue') + 
+  geom_sf_label(data = qcoi.sf,
+                aes(label = BASIN_NAME),
+                alpha = 0.5) +
+  annotation_north_arrow(location = "tr", which_north = "true") +
+  theme_bw() +
+  labs(x = '', y = '', title = 'Catchmets of Interest in Queensland', fill = 'Basin Name') +
+  xlim(151.5, 154)
+
+# we are now ready to use these catchment boundaries to subset the global set of GHCNd weather stations to those contained within the boundaries of these catchments of interest:
+
+# we just need to convert the GHCNd meta data into a simple features object:
+# this simple features object will contain spatial point observation describing these weather stations
+
+all.stations.prcp.sf <- st_as_sf(x = all.stations.prcp,
+                                coords = c('longitude', 'latitude'),
+                                crs = 4326
+                        )
+
+all.stations.prcp.sf
+
+qcoi.sf <- st_transform(x = qcoi.sf,
+             crs = st_crs(x = all.stations.prcp.sf))
+
+# similarly...
+
+qcoi.mjr.ww.sf <- st_transform(x = qcoi.mjr.ww.sf,
+                               crs = st_crs(x = all.stations.prcp.sf))
+
+# subset the weather station meta data to those that are contained within the boundaries of our catchments of interest:
+
+qsoi.sf <- st_intersection(x = all.stations.prcp.sf, y = qcoi.sf)
+
+# note that this also has associated BASIN_NAME (catchment name) with weather station ID in our simple features object containing the station meta data
+
+qsoi.sf
+
+# this will allow us to group station data by catchment to aggregate rainfall data at a catchment level and calculate catchment level summary statistics
+
+ggplot() +
+  geom_sf(data = qcoi.sf, aes(fill = BASIN_NAME), alpha = 0.25) +
+  geom_sf(data = qcoi.mjr.ww.sf, colour = 'blue') +
+  geom_sf(data = qsoi.sf, alpha = 0.5) +
+  geom_sf_label(data = qcoi.sf,
+                aes(label = BASIN_NAME),
+                alpha = 0.75) +
+  annotation_north_arrow(location = "tr", which_north = "true") +
+  theme_bw() +
+  labs(x = '', y = '', title = 'Catchmets of Interest in Queensland\nPoints represent Locations of GHCNd Weather Stations\nBlue Lines represent Major Water Ways', fill = 'Basin Name') +
+  xlim(151.5, 154)
+
+ggsave(filename = '~/flood_hackathon/precip/data/plots/Weather_Stations_in_Catchments_of_Interest.png')
+
+
+
+#### edited through to here ####
+
+
+
+
+
+
+
+
+# `all.stations.prcp.sf` contains far more data than `qcoi.sf` so we will reproject `qcoi.sf
 
 # get the QLD state boundaries
 
@@ -192,7 +370,7 @@ dim(brc.stn.data)
 
 # whooa
 
-library(lubridate)
+
 
 brcs.prcp.2010.2022.tb <- filter(brc.stn.data, year(date) > 2009) %>%
                             select(id, date, prcp, qflag_prcp) %>%
